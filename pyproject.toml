@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "organization-directory-api"
+version = "0.1.0"
+description = ""
+authors = ["melixz <dr.melix@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = "^0.115.6"
+uvicorn = "^0.34.0"
+sqlalchemy = {extras = ["asyncio"], version = "^2.0.37"}
+asyncpg = "^0.30.0"
+pydantic = "^2.10.5"
+alembic = "^1.14.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
