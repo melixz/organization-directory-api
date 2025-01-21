@@ -9,11 +9,14 @@ from src.schemas import (
 )
 from src.utils.geolocation import get_coordinates_from_city
 from src.utils.distance import calculate_distance
+from src.dependencies import verify_api_key
 
 router = APIRouter()
 
 
-@router.post("/", response_model=OrganizationResponse)
+@router.post(
+    "/", response_model=OrganizationResponse, dependencies=[Depends(verify_api_key)]
+)
 async def create_organization(
     org_data: OrganizationCreate, db: AsyncSession = Depends(get_db)
 ):
@@ -44,7 +47,11 @@ async def create_organization(
     return new_org
 
 
-@router.get("/", response_model=list[OrganizationResponse])
+@router.get(
+    "/",
+    response_model=list[OrganizationResponse],
+    dependencies=[Depends(verify_api_key)],
+)
 async def list_organizations(
     db: AsyncSession = Depends(get_db),
     name: str = Query(None, description="Поиск по названию"),
@@ -65,7 +72,11 @@ async def list_organizations(
     return organizations
 
 
-@router.get("/{org_id}", response_model=OrganizationResponse)
+@router.get(
+    "/{org_id}",
+    response_model=OrganizationResponse,
+    dependencies=[Depends(verify_api_key)],
+)
 async def get_organization(org_id: int, db: AsyncSession = Depends(get_db)):
     """
     Получение информации об организации по ID.
@@ -79,6 +90,7 @@ async def get_organization(org_id: int, db: AsyncSession = Depends(get_db)):
 @router.get(
     "/search",
     response_model=list[OrganizationResponse],
+    dependencies=[Depends(verify_api_key)],
     description="Поиск организаций по координатам или названию города",
 )
 async def search_organizations(
