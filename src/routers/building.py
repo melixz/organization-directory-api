@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+
 from src.database import get_db
 from src.models import Building
 from src.schemas import BuildingCreate, BuildingResponse

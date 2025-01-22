@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from sqlalchemy import select
+
 from src.database import get_db
 from src.models import Activity
 from src.schemas import ActivityCreate, ActivityResponse
@@ -10,49 +12,41 @@ router = APIRouter()
 
 
 @router.post(
-    "/",
-    response_model=ActivityResponse,
-    dependencies=[Depends(verify_api_key)],
-    description="Создание нового вида деятельности.",
+    "/", response_model=ActivityResponse, dependencies=[Depends(verify_api_key)]
 )
 async def create_activity(
     activity_data: ActivityCreate, db: AsyncSession = Depends(get_db)
 ):
-    """
-    Создание нового вида деятельности.
-    """
     new_activity = Activity(**activity_data.dict())
     db.add(new_activity)
     await db.commit()
     await db.refresh(new_activity)
-    return new_activity
+    return ActivityResponse.from_orm(new_activity)
 
 
 @router.get(
-    "/",
-    response_model=list[ActivityResponse],
-    dependencies=[Depends(verify_api_key)],
-    description="Получение списка всех видов деятельности.",
+    "/", response_model=list[ActivityResponse], dependencies=[Depends(verify_api_key)]
 )
 async def list_activities(db: AsyncSession = Depends(get_db)):
-    """
-    Получение списка всех видов деятельности.
-    """
-    result = await db.execute(select(Activity))
-    return result.scalars().all()
+    stmt = select(Activity).options(selectinload(Activity.children))
+    result = await db.execute(stmt)
+    items = result.scalars().all()
+    return [ActivityResponse.from_orm(item) for item in items]
 
 
 @router.get(
     "/{activity_id}",
     response_model=ActivityResponse,
     dependencies=[Depends(verify_api_key)],
-    description="Получение информации о виде деятельности по ID.",
 )
 async def get_activity(activity_id: int, db: AsyncSession = Depends(get_db)):
-    """
-    Получение информации о виде деятельности по ID.
-    """
-    activity = await db.get(Activity, activity_id)
+    stmt = (
+        select(Activity)
+        .where(Activity.id == activity_id)
+        .options(selectinload(Activity.children))
+    )
+    result = await db.execute(stmt)
+    activity = result.scalars().first()
     if not activity:
-        raise HTTPException(status_code=404, detail="Activity not found")
-    return activity
+        raise HTTPException(status_code=404, detail="Not found")
+    return ActivityResponse.from_orm(activity)

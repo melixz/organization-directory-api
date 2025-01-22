@@ -32,8 +32,8 @@ class Activity(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    # self-relation для дерева
-    children = relationship("Activity", backref="parent", remote_side=[id])
+    parent = relationship("Activity", remote_side=[id], back_populates="children")
+    children = relationship("Activity", back_populates="parent")
 
 
 class Organization(Base):
