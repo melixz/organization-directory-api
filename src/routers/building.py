@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-
 from src.database import get_db
 from src.models import Building
 from src.schemas import BuildingCreate, BuildingResponse
@@ -19,9 +18,6 @@ router = APIRouter()
 async def create_building(
     building_data: BuildingCreate, db: AsyncSession = Depends(get_db)
 ):
-    """
-    Создание нового здания.
-    """
     new_building = Building(**building_data.dict())
     db.add(new_building)
     await db.commit()
@@ -36,9 +32,6 @@ async def create_building(
     description="Получение списка всех зданий.",
 )
 async def list_buildings(db: AsyncSession = Depends(get_db)):
-    """
-    Получение списка всех зданий.
-    """
     result = await db.execute(select(Building))
     return result.scalars().all()
 
@@ -50,9 +43,6 @@ async def list_buildings(db: AsyncSession = Depends(get_db)):
     description="Получение информации о здании по ID.",
 )
 async def get_building(building_id: int, db: AsyncSession = Depends(get_db)):
-    """
-    Получение информации о здании по ID.
-    """
     building = await db.get(Building, building_id)
     if not building:
         raise HTTPException(status_code=404, detail="Building not found")
