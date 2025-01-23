@@ -11,6 +11,65 @@ from src.utils.distance import calculate_distance
 router = APIRouter()
 
 
+@router.get(
+    "/",
+    response_model=list[OrganizationResponse],
+    dependencies=[Depends(verify_api_key)],
+    description="Список всех организаций с необязательной фильтрацией по названию, виду деятельности и зданию.",
+)
+async def list_organizations(
+    db: AsyncSession = Depends(get_db),
+    name: str = Query(None),
+    activity_id: int = Query(None),
+    building_id: int = Query(None),
+):
+    stmt = select(Organization).options(
+        selectinload(Organization.building),
+        selectinload(Organization.activities).selectinload(Activity.children),
+    )
+    if name:
+        stmt = stmt.where(Organization.name.ilike(f"%{name}%"))
+    if activity_id:
+        stmt = stmt.join(Organization.activities).where(Activity.id == activity_id)
+    if building_id:
+        stmt = stmt.where(Organization.building_id == building_id)
+
+    result = await db.execute(stmt)
+    organizations = result.scalars().all()
+
+    def serialize_activity(activity):
+        return {
+            "id": activity.id,
+            "name": activity.name,
+            "children": [
+                {
+                    "id": ch.id,
+                    "name": ch.name,
+                    "children": [],
+                }
+                for ch in activity.children
+            ],
+        }
+
+    def serialize_organization(org):
+        return {
+            "id": org.id,
+            "name": org.name,
+            "phone_numbers": org.phone_numbers.split(",") if org.phone_numbers else [],
+            "building": {
+                "id": org.building.id,
+                "address": org.building.address,
+                "latitude": org.building.latitude,
+                "longitude": org.building.longitude,
+            }
+            if org.building
+            else None,
+            "activities": [serialize_activity(a) for a in org.activities],
+        }
+
+    return [OrganizationResponse(**serialize_organization(o)) for o in organizations]
+
+
 @router.post(
     "/",
     response_model=OrganizationResponse,
@@ -20,9 +79,6 @@ router = APIRouter()
 async def create_organization(
     org_data: OrganizationCreate, db: AsyncSession = Depends(get_db)
 ):
-    """
-    Создание новой организации с привязкой к зданию и активностям.
-    """
     async with db.begin():
         building = None
         if org_data.building_id:
@@ -41,14 +97,12 @@ async def create_organization(
                 select(Activity).where(Activity.id.in_(org_data.activity_ids))
             )
             activities = result.scalars().all()
-
             if len(activities) != len(org_data.activity_ids):
                 raise HTTPException(
                     status_code=400,
                     detail="One or more activities do not exist.",
                 )
 
-        # Создаём новую организацию
         new_org = Organization(
             name=org_data.name,
             phone_numbers=",".join(org_data.phone_numbers)
@@ -88,55 +142,12 @@ async def create_organization(
 
 
 @router.get(
-    "/",
-    response_model=list[OrganizationResponse],
-    dependencies=[Depends(verify_api_key)],
-    description="Список всех организаций с фильтрацией.",
-)
-async def list_organizations(
-    db: AsyncSession = Depends(get_db),
-    name: str = Query(None),
-    activity_id: int = Query(None),
-):
-    """
-    Получение списка всех организаций с фильтрацией по названию или активности.
-    """
-    stmt = select(Organization).options(
-        selectinload(Organization.building),
-        selectinload(Organization.activities).selectinload(Activity.children),
-    )
-    if name:
-        stmt = stmt.where(Organization.name.ilike(f"%{name}%"))
-    if activity_id:
-        stmt = stmt.join(Organization.activities).where(Activity.id == activity_id)
-
-    result = await db.execute(stmt)
-    organizations = result.scalars().all()
-
-    org_list = []
-    for org in organizations:
-        org_dict = {
-            "id": org.id,
-            "name": org.name,
-            "phone_numbers": org.phone_numbers.split(",") if org.phone_numbers else [],
-            "building": org.building,
-            "activities": org.activities,
-        }
-        org_list.append(OrganizationResponse(**org_dict))
-
-    return org_list
-
-
-@router.get(
     "/{organization_id}",
     response_model=OrganizationResponse,
     dependencies=[Depends(verify_api_key)],
     description="Получение информации об организации по её идентификатору.",
 )
 async def get_organization(organization_id: int, db: AsyncSession = Depends(get_db)):
-    """
-    Получение одной организации по её ID.
-    """
     stmt = (
         select(Organization)
         .where(Organization.id == organization_id)
@@ -174,36 +185,27 @@ async def search_organizations(
     radius_km: float = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Поиск организаций по городу или координатам.
-    """
     stmt = select(Organization).options(selectinload(Organization.building))
     result = await db.execute(stmt)
     organizations = result.scalars().all()
 
     if base_lat is not None and base_lon is not None and radius_km is not None:
-        nearby_organizations = [
-            org
-            for org in organizations
-            if org.building
-            and calculate_distance(
-                org.building.latitude, org.building.longitude, base_lat, base_lon
-            )
-            <= radius_km
+        filtered = []
+        for org in organizations:
+            if org.building:
+                dist = calculate_distance(
+                    org.building.latitude, org.building.longitude, base_lat, base_lon
+                )
+                if dist <= radius_km:
+                    filtered.append(org)
+        organizations = filtered
+
+    if city:
+        organizations = [
+            o
+            for o in organizations
+            if o.building and city.lower() in o.building.address.lower()
         ]
-        org_list = []
-        for org in nearby_organizations:
-            org_dict = {
-                "id": org.id,
-                "name": org.name,
-                "phone_numbers": org.phone_numbers.split(",")
-                if org.phone_numbers
-                else [],
-                "building": org.building,
-                "activities": org.activities,
-            }
-            org_list.append(OrganizationResponse(**org_dict))
-        return org_list
 
     org_list = []
     for org in organizations:

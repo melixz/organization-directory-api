@@ -5,24 +5,9 @@ from src.database import get_db
 from src.models import Building
 from src.schemas import BuildingCreate, BuildingResponse
 from src.dependencies import verify_api_key
+from src.utils.geolocation import get_coordinates_from_city
 
 router = APIRouter()
-
-
-@router.post(
-    "/",
-    response_model=BuildingResponse,
-    dependencies=[Depends(verify_api_key)],
-    description="Создание нового здания.",
-)
-async def create_building(
-    building_data: BuildingCreate, db: AsyncSession = Depends(get_db)
-):
-    new_building = Building(**building_data.dict())
-    db.add(new_building)
-    await db.commit()
-    await db.refresh(new_building)
-    return new_building
 
 
 @router.get(
@@ -47,3 +32,25 @@ async def get_building(building_id: int, db: AsyncSession = Depends(get_db)):
     if not building:
         raise HTTPException(status_code=404, detail="Building not found")
     return building
+
+
+@router.post(
+    "/",
+    response_model=BuildingResponse,
+    dependencies=[Depends(verify_api_key)],
+    description="Создание нового здания (адрес + автоматическое получение координат).",
+)
+async def create_building(
+    building_data: BuildingCreate, db: AsyncSession = Depends(get_db)
+):
+    coords = await get_coordinates_from_city(building_data.address)
+    if not coords:
+        raise HTTPException(
+            status_code=400, detail="Не удалось определить координаты по адресу"
+        )
+    lat, lon = coords
+    new_building = Building(address=building_data.address, latitude=lat, longitude=lon)
+    db.add(new_building)
+    await db.commit()
+    await db.refresh(new_building)
+    return new_building
