@@ -11,6 +11,120 @@ from src.utils.distance import calculate_distance
 router = APIRouter()
 
 
+def serialize_activity(activity, depth=3):
+    if depth == 0:
+        return {
+            "id": activity.id,
+            "name": activity.name,
+            "children": [],
+        }
+    return {
+        "id": activity.id,
+        "name": activity.name,
+        "children": [
+            serialize_activity(child, depth=depth - 1) for child in activity.children
+        ],
+    }
+
+
+def serialize_organization(org):
+    return {
+        "id": org.id,
+        "name": org.name,
+        "phone_numbers": org.phone_numbers.split(",") if org.phone_numbers else [],
+        "building": {
+            "id": org.building.id,
+            "address": org.building.address,
+            "latitude": org.building.latitude,
+            "longitude": org.building.longitude,
+        }
+        if org.building
+        else None,
+        "activities": [serialize_activity(a) for a in org.activities],
+    }
+
+
+@router.get(
+    "/search",
+    response_model=list[OrganizationResponse],
+    dependencies=[Depends(verify_api_key)],
+    description="Поиск организаций по координатам или названию города.",
+)
+async def search_organizations(
+    city: str = Query(None),
+    base_lat: float = Query(None),
+    base_lon: float = Query(None),
+    radius_km: float = Query(None),
+    min_lat: float = Query(None),
+    max_lat: float = Query(None),
+    min_lon: float = Query(None),
+    max_lon: float = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    if not (
+        city
+        or (
+            (base_lat is not None and base_lon is not None and radius_km is not None)
+            or (
+                min_lat is not None
+                and max_lat is not None
+                and min_lon is not None
+                and max_lon is not None
+            )
+        )
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="At least one of 'city', 'base_lat, base_lon, radius_km' or 'min_lat, max_lat, min_lon, max_lon' must be provided.",
+        )
+
+    stmt = select(Organization).options(
+        selectinload(Organization.building),
+        selectinload(Organization.activities)
+        .selectinload(Activity.children)
+        .selectinload(Activity.children),
+    )
+
+    result = await db.execute(stmt)
+    organizations = result.scalars().all()
+
+    if (
+        min_lat is not None
+        and max_lat is not None
+        and min_lon is not None
+        and max_lon is not None
+    ):
+        organizations = [
+            org
+            for org in organizations
+            if org.building
+            and min_lat <= org.building.latitude <= max_lat
+            and min_lon <= org.building.longitude <= max_lon
+        ]
+
+    if base_lat is not None and base_lon is not None and radius_km is not None:
+        organizations = [
+            org
+            for org in organizations
+            if org.building
+            and calculate_distance(
+                org.building.latitude, org.building.longitude, base_lat, base_lon
+            )
+            <= radius_km
+        ]
+
+    if city:
+        organizations = [
+            org
+            for org in organizations
+            if org.building and city.lower() in org.building.address.lower()
+        ]
+
+    return [
+        OrganizationResponse(**serialize_organization(org)) for org in organizations
+    ]
+
+
 @router.get(
     "/",
     response_model=list[OrganizationResponse],
@@ -25,7 +139,9 @@ async def list_organizations(
 ):
     stmt = select(Organization).options(
         selectinload(Organization.building),
-        selectinload(Organization.activities).selectinload(Activity.children),
+        selectinload(Organization.activities)
+        .selectinload(Activity.children)
+        .selectinload(Activity.children),
     )
     if name:
         stmt = stmt.where(Organization.name.ilike(f"%{name}%"))
@@ -36,36 +152,6 @@ async def list_organizations(
 
     result = await db.execute(stmt)
     organizations = result.scalars().all()
-
-    def serialize_activity(activity):
-        return {
-            "id": activity.id,
-            "name": activity.name,
-            "children": [
-                {
-                    "id": ch.id,
-                    "name": ch.name,
-                    "children": [],
-                }
-                for ch in activity.children
-            ],
-        }
-
-    def serialize_organization(org):
-        return {
-            "id": org.id,
-            "name": org.name,
-            "phone_numbers": org.phone_numbers.split(",") if org.phone_numbers else [],
-            "building": {
-                "id": org.building.id,
-                "address": org.building.address,
-                "latitude": org.building.latitude,
-                "longitude": org.building.longitude,
-            }
-            if org.building
-            else None,
-            "activities": [serialize_activity(a) for a in org.activities],
-        }
 
     return [OrganizationResponse(**serialize_organization(o)) for o in organizations]
 
@@ -120,7 +206,6 @@ async def create_organization(
         .where(Organization.id == new_org.id)
         .options(
             selectinload(Organization.building),
-            selectinload(Organization.activities).selectinload(Activity.children),
             selectinload(Organization.activities)
             .selectinload(Activity.children)
             .selectinload(Activity.children),
@@ -129,16 +214,12 @@ async def create_organization(
     result = await db.execute(stmt)
     loaded_org = result.scalars().first()
 
-    org_dict = {
-        "id": loaded_org.id,
-        "name": loaded_org.name,
-        "phone_numbers": loaded_org.phone_numbers.split(",")
-        if loaded_org.phone_numbers
-        else [],
-        "building": loaded_org.building,
-        "activities": loaded_org.activities,
-    }
-    return OrganizationResponse(**org_dict)
+    if not loaded_org:
+        raise HTTPException(
+            status_code=404, detail="Organization not found after creation"
+        )
+
+    return OrganizationResponse(**serialize_organization(loaded_org))
 
 
 @router.get(
@@ -153,7 +234,9 @@ async def get_organization(organization_id: int, db: AsyncSession = Depends(get_
         .where(Organization.id == organization_id)
         .options(
             selectinload(Organization.building),
-            selectinload(Organization.activities).selectinload(Activity.children),
+            selectinload(Organization.activities)
+            .selectinload(Activity.children)
+            .selectinload(Activity.children),
         )
     )
     result = await db.execute(stmt)
@@ -162,59 +245,4 @@ async def get_organization(organization_id: int, db: AsyncSession = Depends(get_
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    org_dict = {
-        "id": org.id,
-        "name": org.name,
-        "phone_numbers": org.phone_numbers.split(",") if org.phone_numbers else [],
-        "building": org.building,
-        "activities": org.activities,
-    }
-    return OrganizationResponse(**org_dict)
-
-
-@router.get(
-    "/search",
-    response_model=list[OrganizationResponse],
-    dependencies=[Depends(verify_api_key)],
-    description="Поиск организаций по координатам или названию города.",
-)
-async def search_organizations(
-    city: str = Query(None),
-    base_lat: float = Query(None),
-    base_lon: float = Query(None),
-    radius_km: float = Query(None),
-    db: AsyncSession = Depends(get_db),
-):
-    stmt = select(Organization).options(selectinload(Organization.building))
-    result = await db.execute(stmt)
-    organizations = result.scalars().all()
-
-    if base_lat is not None and base_lon is not None and radius_km is not None:
-        filtered = []
-        for org in organizations:
-            if org.building:
-                dist = calculate_distance(
-                    org.building.latitude, org.building.longitude, base_lat, base_lon
-                )
-                if dist <= radius_km:
-                    filtered.append(org)
-        organizations = filtered
-
-    if city:
-        organizations = [
-            o
-            for o in organizations
-            if o.building and city.lower() in o.building.address.lower()
-        ]
-
-    org_list = []
-    for org in organizations:
-        org_dict = {
-            "id": org.id,
-            "name": org.name,
-            "phone_numbers": org.phone_numbers.split(",") if org.phone_numbers else [],
-            "building": org.building,
-            "activities": org.activities,
-        }
-        org_list.append(OrganizationResponse(**org_dict))
-    return org_list
+    return OrganizationResponse(**serialize_organization(org))
