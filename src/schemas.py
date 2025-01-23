@@ -29,7 +29,6 @@ class BuildingResponse(BuildingBase):
     model_config = ConfigDict(from_attributes=True)
 
 
-# Activity Schemas
 class ActivityCreate(BaseModel):
     """
     Схема для создания вида деятельности.
