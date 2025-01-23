@@ -37,8 +37,21 @@ def activity_to_dict(activity):
 async def create_activity(
     activity_data: ActivityCreate, db: AsyncSession = Depends(get_db)
 ):
-    new_activity = Activity(**activity_data.dict())
+    if activity_data.parent_id == 0:
+        raise HTTPException(status_code=400, detail="parent_id=0 недопустим")
+    if activity_data.parent_id is not None:
+        parent_exists = await db.scalar(
+            select(Activity.id).where(Activity.id == activity_data.parent_id)
+        )
+        if not parent_exists:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Parent with id={activity_data.parent_id} does not exist",
+            )
+
+    new_activity = Activity(name=activity_data.name, parent_id=activity_data.parent_id)
     db.add(new_activity)
+    await db.flush()
     await db.commit()
     await db.refresh(new_activity)
 
@@ -47,14 +60,24 @@ async def create_activity(
         .where(Activity.id == new_activity.id)
         .options(selectinload(Activity.children).selectinload(Activity.children))
     )
-    result = await db.execute(stmt)
+    result = (await db.execute(stmt)).unique()
     loaded_activity = result.scalars().first()
-
     if not loaded_activity:
         raise HTTPException(status_code=404, detail="Activity not found after creation")
-
-    activity_data = activity_to_dict(loaded_activity)
-    return ActivityResponse(**activity_data)
+    return ActivityResponse(
+        id=loaded_activity.id,
+        name=loaded_activity.name,
+        children=[
+            {
+                "id": ch.id,
+                "name": ch.name,
+                "children": [
+                    {"id": grch.id, "name": grch.name} for grch in ch.children
+                ],
+            }
+            for ch in loaded_activity.children
+        ],
+    )
 
 
 @router.get(
@@ -67,11 +90,25 @@ async def list_activities(db: AsyncSession = Depends(get_db)):
     stmt = select(Activity).options(
         selectinload(Activity.children).selectinload(Activity.children)
     )
-    result = await db.execute(stmt)
+    result = (await db.execute(stmt)).unique()
     activities = result.scalars().all()
-
-    activities_data = [activity_to_dict(activity) for activity in activities]
-    return [ActivityResponse(**data) for data in activities_data]
+    return [
+        ActivityResponse(
+            id=a.id,
+            name=a.name,
+            children=[
+                {
+                    "id": ch.id,
+                    "name": ch.name,
+                    "children": [
+                        {"id": grch.id, "name": grch.name} for grch in ch.children
+                    ],
+                }
+                for ch in a.children
+            ],
+        )
+        for a in activities
+    ]
 
 
 @router.get(
@@ -86,11 +123,21 @@ async def get_activity(activity_id: int, db: AsyncSession = Depends(get_db)):
         .where(Activity.id == activity_id)
         .options(selectinload(Activity.children).selectinload(Activity.children))
     )
-    result = await db.execute(stmt)
+    result = (await db.execute(stmt)).unique()
     activity = result.scalars().first()
-
     if not activity:
         raise HTTPException(status_code=404, detail="Activity not found")
-
-    activity_data = activity_to_dict(activity)
-    return ActivityResponse(**activity_data)
+    return ActivityResponse(
+        id=activity.id,
+        name=activity.name,
+        children=[
+            {
+                "id": ch.id,
+                "name": ch.name,
+                "children": [
+                    {"id": grch.id, "name": grch.name} for grch in ch.children
+                ],
+            }
+            for ch in activity.children
+        ],
+    )

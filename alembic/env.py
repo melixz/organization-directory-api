@@ -3,8 +3,8 @@ from sqlalchemy import engine_from_config, pool
 from alembic import context
 import os
 
-from src.database import Base  # Импортируем вашу базу
-from src.models import *  # Убедитесь, что все модели импортированы
+from src.database import Base
+from src.models import *
 
 # Загружаем конфигурацию Alembic
 config = context.config

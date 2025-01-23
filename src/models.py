@@ -19,8 +19,11 @@ class Building(Base):
     longitude = Column(Float, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-    organizations = relationship("Organization", back_populates="building")
+    organizations = relationship(
+        "Organization",
+        back_populates="building",
+        lazy="selectin",
+    )
 
 
 class Activity(Base):
@@ -31,9 +34,23 @@ class Activity(Base):
     parent_id = Column(Integer, ForeignKey("activities.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-    parent = relationship("Activity", remote_side=[id], back_populates="children")
-    children = relationship("Activity", back_populates="parent")
+    parent = relationship(
+        "Activity",
+        remote_side=[id],
+        back_populates="children",
+        lazy="selectin",
+    )
+    children = relationship(
+        "Activity",
+        back_populates="parent",
+        lazy="selectin",
+    )
+    organizations = relationship(
+        "Organization",
+        secondary=organization_activities,
+        back_populates="activities",
+        lazy="selectin",
+    )
 
 
 class Organization(Base):
@@ -45,8 +62,14 @@ class Organization(Base):
     building_id = Column(Integer, ForeignKey("buildings.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-    building = relationship("Building", back_populates="organizations")
+    building = relationship(
+        "Building",
+        back_populates="organizations",
+        lazy="selectin",
+    )
     activities = relationship(
-        "Activity", secondary=organization_activities, backref="organizations"
+        "Activity",
+        secondary=organization_activities,
+        back_populates="organizations",
+        lazy="selectin",
     )
